@@ -1,0 +1,189 @@
+# ============================================================
+# PIKRS — MCP Servers Docker Compose
+# ============================================================
+# Orchestrates all MCP servers. Add new services as you create
+# new connectors (rxnorm, openfda, pubmed, etc.)
+#
+# Usage:
+#   docker-compose up -d
+#   docker-compose logs -f pubchem
+# ============================================================
+
+
+services:
+  pubchem:
+    build:
+      context: .
+      dockerfile: pubchem/Dockerfile
+    container_name: pikrs-pubchem
+    ports:
+      - "8100:8100"
+    environment:
+      - PUBCHEM_BASE_URL=https://pubchem.ncbi.nlm.nih.gov/rest/pug
+      - REQUEST_TIMEOUT=15.0
+      - MAX_RETRIES=3
+      - RATE_LIMIT_PER_SECOND=5.0
+      - SERVER_VERSION=1.0.0
+      - HOST=0.0.0.0
+      - PORT=8100
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - pikrs-network
+
+  rxnorm:
+    build:
+      context: .
+      dockerfile: rxnorm/Dockerfile
+    container_name: pikrs-rxnorm
+    ports:
+      - "8101:8101"
+    environment:
+      - RXNORM_BASE_URL=https://rxnav.nlm.nih.gov/REST
+      - REQUEST_TIMEOUT=15.0
+      - MAX_RETRIES=3
+      - RATE_LIMIT_PER_SECOND=20.0
+      - SERVER_VERSION=1.0.0
+      - HOST=0.0.0.0
+      - PORT=8101
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - pikrs-network
+
+  openfda:
+    build:
+      context: .
+      dockerfile: openfda/Dockerfile
+    container_name: pikrs-openfda
+    ports:
+      - "8102:8102"
+    environment:
+      - OPENFDA_BASE_URL=https://api.fda.gov/drug
+      - REQUEST_TIMEOUT=15.0
+      - MAX_RETRIES=3
+      - RATE_LIMIT_PER_SECOND=4.0
+      - SERVER_VERSION=1.0.0
+      - HOST=0.0.0.0
+      - PORT=8102
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - pikrs-network
+
+  clinicaltrials:
+    build:
+      context: .
+      dockerfile: clinicaltrials/Dockerfile
+    container_name: pikrs-clinicaltrials
+    ports:
+      - "8103:8103"
+    environment:
+      - CLINICALTRIALS_BASE_URL=https://clinicaltrials.gov/api/v2
+      - REQUEST_TIMEOUT=15.0
+      - MAX_RETRIES=3
+      - RATE_LIMIT_PER_SECOND=4.0
+      - SERVER_VERSION=1.0.0
+      - HOST=0.0.0.0
+      - PORT=8103
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - pikrs-network
+  
+
+  pubmed:
+      build:
+        context: .
+        dockerfile: pubmed/Dockerfile
+      container_name: pikrs-pubmed
+      ports:
+        - "8104:8104"
+      environment:
+        - PUBMED_BASE_URL=https://eutils.ncbi.nlm.nih.gov/entrez/eutils
+        - REQUEST_TIMEOUT=15.0
+        - MAX_RETRIES=3
+        - RATE_LIMIT_PER_SECOND=3.0
+        - SERVER_VERSION=1.0.0
+        - HOST=0.0.0.0
+        - PORT=8104
+        - LOG_LEVEL=INFO
+      restart: unless-stopped
+      networks:
+        - pikrs-network
+
+
+  chembl:
+    build:
+      context: .
+      dockerfile: chembl/Dockerfile
+    container_name: pikrs-chembl
+    ports:
+      - "8105:8105"
+    environment:
+      - CHEMBL_BASE_URL=https://www.ebi.ac.uk/chembl/api/data
+      - REQUEST_TIMEOUT=15.0
+      - MAX_RETRIES=3
+      - RATE_LIMIT_PER_SECOND=3.0
+      - SERVER_VERSION=1.0.0
+      - HOST=0.0.0.0
+      - PORT=8105
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - pikrs-network
+
+  kegg:
+    build:
+      context: .
+      dockerfile: kegg/Dockerfile
+    container_name: pikrs-kegg
+    ports:
+      - "8106:8106"
+    environment:
+      - KEGG_BASE_URL=https://rest.kegg.jp
+      - REQUEST_TIMEOUT=15.0
+      - MAX_RETRIES=3
+      - RATE_LIMIT_PER_SECOND=3.0
+      - SERVER_VERSION=1.0.0
+      - HOST=0.0.0.0
+      - PORT=8106
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - pikrs-network
+
+
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: orchestrator/Dockerfile
+    container_name: pikrs-orchestrator
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../orchestrator/ai_engine/.env
+    environment:
+      # Backend Dynamic Registry
+      - PUBCHEM_MCP_URL=http://pubchem:8100/query
+      - RXNORM_MCP_URL=http://rxnorm:8101/query
+      - OPENFDA_MCP_URL=http://openfda:8102/query
+      - CLINICALTRIALS_MCP_URL=http://clinicaltrials:8103/query
+      - PUBMED_MCP_URL=http://pubmed:8104/query
+      - CHEMBL_MCP_URL=http://chembl:8105/query
+      - KEGG_MCP_URL=http://kegg:8106/query
+    depends_on:
+      - pubchem
+      - rxnorm
+      - openfda
+      - clinicaltrials
+      - pubmed
+      - chembl
+      - kegg
+    networks:
+      - pikrs-network
+
+networks:
+  pikrs-network:
+    driver: bridge
