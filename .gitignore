@@ -67,7 +67,9 @@ temp/
 
 
 # MCP servers
-mcp_servers/
+mcp-servers/
+
+
 
 # chembl_mcp
 chembl_mcp/
