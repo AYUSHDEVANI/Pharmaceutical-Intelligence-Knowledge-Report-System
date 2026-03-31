@@ -74,7 +74,7 @@ class FAERSAPIClient:
 
     
 
-    async def search_adverse_events(self, drug_name: str) -> Dict[str, Any]:
+    async def faers_search(self, drug_name: str) -> Dict[str, Any]:
         url = f"{self.base_url}?search=patient.drug.medicinalproduct:{drug_name}&limit=100"
 
 
