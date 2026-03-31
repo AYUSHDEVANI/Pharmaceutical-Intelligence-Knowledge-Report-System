@@ -1,87 +1,270 @@
-"""
-PIKRS Orchestrator — Aggregator
-=================================
-Merges raw MCP responses (from the dynamic client) into the
-unified DrugProfile ontology.
-"""
-
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List
 from .models import ChemblData, DrugProfile
 
+
+# ---------------------------------------------------------
+# 🧠 EVIDENCE SCORING
+# ---------------------------------------------------------
+def _compute_evidence_score(relevance: str, interaction: list, source_count: int) -> float:
+    score = 0.0
+
+    if relevance == "high":
+        score += 0.5
+    elif relevance == "medium":
+        score += 0.3
+
+    interaction_types = [i.get("type") for i in interaction if isinstance(i, dict)]
+
+    if "inhibitor" in interaction_types or "agonist" in interaction_types:
+        score += 0.3
+    elif interaction:
+        score += 0.1
+
+    if source_count >= 8:
+        score += 0.2
+    elif source_count >= 5:
+        score += 0.1
+
+    return round(min(score, 1.0), 3)
+
+
+# ---------------------------------------------------------
+# 🧬 TARGET CLASSIFICATION
+# ---------------------------------------------------------
+def _classify_target(gene: str, interaction: list) -> str:
+    interaction_types = [i.get("type") for i in interaction if isinstance(i, dict)]
+
+    if "inhibitor" in interaction_types or "agonist" in interaction_types:
+        return "primary_targets"
+
+    if gene.startswith(("CYP", "UGT", "CES")):
+        return "metabolic_enzymes"
+
+    if gene.startswith(("SLC", "ABC")):
+        return "transporters"
+
+    if interaction:
+        return "secondary_targets"
+
+    return "other_proteins"
+
+
+# ---------------------------------------------------------
+# 🧬 TARGET EXTRACTION
+# ---------------------------------------------------------
+def _extract_targets(profile: DrugProfile) -> Dict[str, List[Dict[str, Any]]]:
+
+    categorized = {
+        "primary_targets": [],
+        "secondary_targets": [],
+        "metabolic_enzymes": [],
+        "transporters": [],
+        "other_proteins": []
+    }
+
+    if not profile.uniprot:
+        return categorized
+
+    source_count = len(profile.sources)
+
+    for p in profile.uniprot.get("results", {}).get("proteins", []):
+        relevance = p.get("confidence", {}).get("target_relevance")
+
+        if relevance not in ["high", "medium"]:
+            continue
+
+        genes = p.get("identifiers", {}).get("gene_symbols", [])
+        interaction = p.get("drug_interaction", [])
+
+        for g in genes:
+            category = _classify_target(g, interaction)
+
+            score = _compute_evidence_score(relevance, interaction, source_count)
+
+            categorized[category].append({
+                "gene": g,
+                "confidence": relevance,
+                "evidence_score": score,
+                "interaction": interaction
+            })
+
+    # Deduplicate
+    for key in categorized:
+        seen = set()
+        unique = []
+
+        for t in categorized[key]:
+            if t["gene"] not in seen:
+                seen.add(t["gene"])
+                unique.append(t)
+
+        categorized[key] = unique
+
+    return categorized
+
+
+# ---------------------------------------------------------
+# 🧪 CHemBL BIOACTIVITY
+# ---------------------------------------------------------
+def _extract_bioactivity(profile: DrugProfile) -> Dict[str, Any]:
+
+    raw_activities = getattr(profile.chembl, "activities", []) if profile.chembl else []
+
+    activities = []
+
+    for a in raw_activities:
+        try:
+            value = float(a.get("value"))
+        except:
+            continue
+
+        activities.append({
+            "target": a.get("target_gene"),
+            "type": a.get("type"),
+            "value": value,
+            "unit": a.get("unit")
+        })
+
+    activities = sorted(activities, key=lambda x: x["value"])
+
+    top = activities[:5]
+
+    return {
+        "top_activities": top,
+        "activity_count": len(activities),
+        "summary": f"Top activity: {top[0]['target']}" if top else "No activity data"
+    }
+
+
+# ---------------------------------------------------------
+# 📚 PUBMED
+# ---------------------------------------------------------
+def _extract_pubmed(profile: DrugProfile) -> Dict[str, Any]:
+
+    papers = profile.research_papers or []
+
+    ranked = sorted(
+        papers,
+        key=lambda x: len(x.get("abstract", "") or ""),
+        reverse=True
+    )
+
+    top = ranked[:5]
+
+    titles = [p.get("title", "") for p in top if p.get("title")]
+
+    return {
+        "top_papers": top,
+        "paper_count": len(papers),
+        "summary": " | ".join(titles[:3]) if titles else "No research data"
+    }
+
+
+# ---------------------------------------------------------
+# ⚠️ FAERS
+# ---------------------------------------------------------
+def _extract_faers(profile: DrugProfile) -> List[Dict[str, Any]]:
+    reactions = []
+
+    if profile.faers:
+        for r in profile.faers.get("results", {}).get("summary", {}).get("top_reactions", []):
+            reactions.append({
+                "name": r.get("reaction"),
+                "frequency": r.get("count")
+            })
+
+    return reactions
+
+
+# ---------------------------------------------------------
+# 🏥 REGULATORY PARSING
+# ---------------------------------------------------------
+def _extract_regulatory(profile: DrugProfile) -> Dict[str, Any]:
+
+    reg = profile.regulatory_information
+
+    return {
+        "indications": reg.indications,
+        "dosage": reg.dosage,
+        "warnings": reg.warnings,
+        "contraindications": reg.contraindications,
+        "adverse_reactions": reg.adverse_reactions,
+        "drug_interactions": reg.drug_interactions
+    }
+
+
+# ---------------------------------------------------------
+# 🧪 CLINICAL TRIALS PARSING
+# ---------------------------------------------------------
+def _extract_clinical(profile: DrugProfile) -> Dict[str, Any]:
+
+    trials = profile.clinical_trials or []
+
+    # Normalize
+    normalized = []
+
+    for t in trials:
+        normalized.append({
+            "title": t.get("title") or t.get("brief_title"),
+            "phase": t.get("phase"),
+            "status": t.get("status"),
+            "condition": t.get("condition")
+        })
+
+    top = normalized[:5]
+
+    summary = (
+        f"{len(trials)} trials found. Top study: {top[0]['title']}"
+        if top else "No clinical trials available"
+    )
+
+    return {
+        "trial_count": len(trials),
+        "top_trials": top,
+        "summary": summary
+    }
+
+
+# ---------------------------------------------------------
+# 🧠 INTELLIGENCE BUILDER
+# ---------------------------------------------------------
+def _build_intelligence(profile, targets, reactions, evidence, bioactivity, clinical, regulatory):
+
+    return {
+        "targets": targets,
+        "bioactivity": bioactivity,
+        "evidence": evidence,
+        "adverse_events": reactions,
+        "clinical": clinical,
+        "regulatory": regulatory,
+        "sources": profile.sources
+    }
+
+
+# ---------------------------------------------------------
+# 🚀 MAIN AGGREGATOR
+# ---------------------------------------------------------
 def aggregate_mcp_responses(drug_name: str, mcp_results: dict[str, Any]) -> DrugProfile:
-    """
-    Map independent MCP server payload schemas into the unified `DrugProfile`.
-    Safely ignores missing sources or unexpected keys.
-    """
+
     profile = DrugProfile(drug_name=drug_name)
 
     for source_id, envelope in mcp_results.items():
         profile.sources.append(source_id)
-        
-        # MCP Response Standard format:
-        # { "status": "...", "data": { "identifiers": {}, "results": {} } }
-        data = envelope.get("data", {})
+
+        data = envelope.get("data") or envelope
         identifiers = data.get("identifiers", {})
-        results = data.get("results", {})
+        raw_results = data.get("results", {})
 
-        if source_id == "pubchem":
-            # Map Identifiers
-            if "pubchem_cid" in identifiers:
-                profile.identifiers.pubchem_cid = int(identifiers["pubchem_cid"])
-            
-            # Map Chemical Properties
-            profile.chemical_properties.molecular_formula = results.get("molecular_formula")
-            if "molecular_weight" in results and results["molecular_weight"] is not None:
-                profile.chemical_properties.molecular_weight = float(results["molecular_weight"])
-            profile.chemical_properties.iupac_name = results.get("iupac_name")
-            profile.chemical_properties.canonical_smiles = results.get("canonical_smiles")
+        if isinstance(raw_results, list):
+            results = raw_results[0] if raw_results else {}
+        elif isinstance(raw_results, dict):
+            results = raw_results
+        else:
+            results = {}
 
-        elif source_id == "rxnorm":
-            # Map Identifiers
-            if "rxnorm_cui" in identifiers:
-                profile.identifiers.rxnorm_cui = str(identifiers["rxnorm_cui"])
-            elif "rxnorm_cui" in results:  # fallback if mapped directly in results
-                profile.identifiers.rxnorm_cui = str(results["rxnorm_cui"])
-                
-            # Cross-reference synonyms and naming
-            if "ingredient_name" in results and results["ingredient_name"]:
-                profile.synonyms.append(results["ingredient_name"])
-            if "brand_names" in results and isinstance(results["brand_names"], list):
-                profile.brand_names.extend(results["brand_names"])
-            if "synonyms" in results and isinstance(results["synonyms"], list):
-                profile.synonyms.extend(results["synonyms"])
-
-        elif source_id == "openfda":
-            # Map Regulatory Information
-            profile.regulatory_information.indications = results.get("indications")
-            profile.regulatory_information.dosage = results.get("dosage")
-            profile.regulatory_information.warnings = results.get("warnings")
-            profile.regulatory_information.contraindications = results.get("contraindications")
-            profile.regulatory_information.adverse_reactions = results.get("adverse_reactions")
-            profile.regulatory_information.drug_interactions = results.get("drug_interactions")
-
-        
-        elif source_id == "clinicaltrials":
-            # Map Clinical Trial Data
-            trials = results.get("clinical_trials")
-
-            if isinstance(trials, list):
-                profile.clinical_trials.extend(trials)
-
-
-        elif source_id == "pubmed":
-
-            papers = results.get("research_papers")
-
-            if isinstance(papers, list):
-                profile.research_papers.extend(papers)
-
-        elif source_id == "chembl":
-
-            profile.identifiers.chembl_id = identifiers.get("chembl_id")
-
+        if source_id == "chembl":
             profile.chembl = ChemblData(
                 chembl_id=identifiers.get("chembl_id"),
                 classification=results.get("classification"),
@@ -90,17 +273,48 @@ def aggregate_mcp_responses(drug_name: str, mcp_results: dict[str, Any]) -> Drug
                 targets=results.get("targets", []),
                 synonyms=results.get("synonyms", [])
             )
+            if profile.chembl:
+                activities = results.get("activities", [])
 
-        elif source_id == "kegg":
+                if isinstance(activities, list):
+                    profile.chembl.activities = activities
 
-            kegg_matches = results.get("kegg_drugs")
+        elif source_id == "pubmed":
+            papers = results.get("research_papers") or results.get("articles")
+            if isinstance(papers, list):
+                profile.research_papers.extend(papers)
 
-            if isinstance(kegg_matches, list):
-                profile.identifiers.other_identifiers["kegg_drugs"] = kegg_matches
+        elif source_id == "clinicaltrials":
+            trials = results.get("clinical_trials") or results.get("studies")
+            if isinstance(trials, list):
+                profile.clinical_trials.extend(trials)
 
-        else:
-            # Future extensibility: Store unknown source data natively if desired,
-            # or just register it as a contributor source.
-            pass
+        elif source_id == "openfda":
+            profile.regulatory_information.indications = (
+                results.get("indications")
+                or results.get("indications_and_usage")
+            )
+            profile.regulatory_information.dosage = results.get("dosage")
+            profile.regulatory_information.warnings = results.get("warnings")
+            profile.regulatory_information.contraindications = results.get("contraindications")
+            profile.regulatory_information.adverse_reactions = results.get("adverse_reactions")
+            profile.regulatory_information.drug_interactions = results.get("drug_interactions")
+
+        elif source_id == "uniprot":
+            profile.uniprot = data
+
+        elif source_id == "faers":
+            profile.faers = data
+
+    targets = _extract_targets(profile)
+    reactions = _extract_faers(profile)
+    evidence = _extract_pubmed(profile)
+    bioactivity = _extract_bioactivity(profile)
+    clinical = _extract_clinical(profile)
+    regulatory = _extract_regulatory(profile)
+
+    profile.intelligence = _build_intelligence(
+        profile, targets, reactions, evidence, bioactivity, clinical, regulatory
+    )
 
     return profile

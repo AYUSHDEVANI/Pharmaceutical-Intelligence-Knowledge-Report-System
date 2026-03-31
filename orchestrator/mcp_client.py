@@ -66,6 +66,42 @@ async def call_mcp_server(
                         # TextContent blocks contain JSON as text
                         if hasattr(block, "text"):
                             parsed = json.loads(block.text)
+                            
+                            # Adapt the new MCP server payloads to what aggregator.py expects
+                            if source_id == "pubchem" and isinstance(parsed.get("results"), list) and parsed["results"]:
+                                first = parsed["results"][0]
+                                parsed["identifiers"] = first.get("identifiers", {})
+                                parsed["results"] = {
+                                    "molecular_formula": first.get("chemical", {}).get("molecular_formula"),
+                                    "molecular_weight": first.get("chemical", {}).get("molecular_weight"),
+                                    "iupac_name": first.get("drug", {}).get("naming", {}).get("generic_name"),
+                                    "canonical_smiles": first.get("structure", {}).get("canonical_smiles"),
+                                }
+                            
+                            elif source_id == "openfda":
+                                drug_label = parsed.get("drug_label", {})
+                                safety = parsed.get("safety", {})
+                                parsed["results"] = {
+                                    "indications": drug_label.get("indications"),
+                                    "dosage": drug_label.get("dosage"),
+                                    "warnings": safety.get("warnings") or safety.get("boxed_warning"),
+                                    "contraindications": drug_label.get("contraindications"),
+                                    "adverse_reactions": drug_label.get("adverse_reactions"),
+                                    "drug_interactions": drug_label.get("drug_interactions"),
+                                }
+                                
+                            elif source_id == "chembl" and isinstance(parsed.get("results"), list) and parsed["results"]:
+                                first = parsed["results"][0]
+                                parsed["identifiers"] = first.get("identifiers", {})
+                                parsed["results"] = first
+                                
+                            elif source_id == "kegg" and isinstance(parsed.get("results"), list):
+                                parsed["results"] = {"kegg_drugs": parsed["results"]}
+                                
+                            elif source_id == "rxnorm":
+                                if "results" in parsed and "brands" in parsed["results"]:
+                                    parsed["results"]["brand_names"] = parsed["results"]["brands"]
+                            
                             # Wrap in the envelope format the aggregator expects
                             envelope = {
                                 "status": "success",

@@ -73,23 +73,26 @@ async def fetch_intelligence(request: QueryRequest):
 
     # Step 3: Merge AI insights + raw scientific data
     return {
-        "drug_name": profile.drug_name,
+    "drug_name": profile.drug_name,
 
-        # AI insights
-        "overview": report["overview"],
-        "chemical_intelligence": report["chemical_intelligence"],
-        "pharmacology": report["pharmacology"],
-        "safety_profile": report["safety_profile"],
+    # 🧠 AI insights
+    "overview": report["overview"],
+    "chemical_intelligence": report["chemical_intelligence"],
+    "pharmacology": report["pharmacology"],
+    "safety_profile": report["safety_profile"],
 
-        # Raw scientific data
-        "chemical_properties": profile.chemical_properties,
-        "chembl": profile.chembl,
-        "regulatory_information": profile.regulatory_information,
+    # 🔥 NEW: INTELLIGENCE LAYER
+    "intelligence": profile.intelligence,
 
-        "clinical_trials": profile.clinical_trials,
-        "research_papers": profile.research_papers,
+    # 📊 Raw scientific data
+    "chemical_properties": profile.chemical_properties,
+    "chembl": profile.chembl,
+    "regulatory_information": profile.regulatory_information,
 
-        "brand_names": profile.brand_names,
-        "synonyms": profile.synonyms,
-        "sources": profile.sources,
-    }
+    "clinical_trials": profile.clinical_trials,
+    "research_papers": profile.research_papers,
+
+    "brand_names": profile.brand_names,
+    "synonyms": profile.synonyms,
+    "sources": profile.sources,
+}

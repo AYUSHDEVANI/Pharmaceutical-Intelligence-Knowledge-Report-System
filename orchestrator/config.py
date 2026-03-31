@@ -70,4 +70,19 @@ MCP_SERVERS = {
         "tool": "kegg_search",
         "timeout": int(os.getenv("KEGG_TIMEOUT", "20")),
     },
+    "dailymed": {
+        "command": ["python", os.path.join(MCP_SERVERS_ROOT, "dailymed", "main.py")],
+        "tool": "dailymed_search",
+        "timeout": int(os.getenv("DAILYMED_TIMEOUT", "20")),
+    },
+    "faers": {
+        "command": ["python", os.path.join(MCP_SERVERS_ROOT, "faers", "main.py")],
+        "tool": "faers_search",
+        "timeout": int(os.getenv("FAERS_TIMEOUT", "20")),
+    },
+    "uniprot": {
+        "command": ["python", os.path.join(MCP_SERVERS_ROOT, "uniprot", "main.py")],
+        "tool": "uniprot_search",
+        "timeout": int(os.getenv("UNIPROT_TIMEOUT", "20")),
+    }
 }

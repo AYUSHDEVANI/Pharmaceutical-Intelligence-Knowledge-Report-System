@@ -43,8 +43,9 @@ class ChemblData(BaseModel):
     classification: dict | None = None
     structure: dict | None = None
     molecular_properties: dict | None = None
-    targets: list[dict] = Field(default_factory=list)
-    synonyms: list[str] = Field(default_factory=list)
+    targets: list = []
+    synonyms: list = []
+    activities: list = []   
 
 
 class DrugProfile(BaseModel):
@@ -63,3 +64,7 @@ class DrugProfile(BaseModel):
     synonyms: list[str] = Field(default_factory=list)
     brand_names: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
+
+    uniprot: dict | None = None
+    faers: dict | None = None
+    intelligence: dict = Field(default_factory=dict)
